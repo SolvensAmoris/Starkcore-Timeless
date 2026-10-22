@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/validate.py": {
+      "runtime": "python3.12",
+      "maxDuration": 30
+    }
+  },
+  "rewrites": [
+    { "source": "/api/validate", "destination": "/api/validate.py" },
+    { "source": "/", "destination": "/api/validate.py" }
+  ]
+}
