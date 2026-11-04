@@ -410,9 +410,11 @@ def validate(req: TrajectoryReq) -> JSONResponse:
                 seq=t.seq,
             )
 
-    # The counter must advance by exactly one. Strict increase alone would let a
-    # silent drop through: seq=[1, 5, 6] with events_lost=0 is still a missing
-    # record, and the counter is the only thing that can prove it is missing.
+    # The counter must *begin* at the batch origin. Checking only that it
+    # advances by one per step still accepts a batch that dropped its leading
+    # record(s): seq=[2, 3, 4] re-anchored to the origin is internally
+    # consecutive yet starts after the genesis. The first record must carry the
+    # first sequence number, so a gap at the head is caught too.
     for prev_t, t in zip(req.trajectory, req.trajectory[1:]):
         if t.seq != prev_t.seq + 1:
             if t.seq == prev_t.seq:
@@ -433,6 +435,26 @@ def validate(req: TrajectoryReq) -> JSONResponse:
                 I5=None,
                 seq=t.seq,
             )
+
+    # ...and it must start at 1. Checking the head after the per-step loop keeps
+    # a reorder reported as a reorder, while still catching a batch that dropped
+    # its leading record(s) and re-anchored: seq=[2, 3, 4] is internally
+    # consecutive yet never reaches the origin.
+    first = req.trajectory[0]
+    if first.seq != 1:
+        defect = "non-positive start" if first.seq < 1 else "leading gap"
+        return respond(
+            Verdict.BLOCK,
+            level=0,
+            action="FREEZE",
+            reason=(
+                f"non-consecutive sequence counter ({defect}: batch starts at seq {first.seq}): "
+                "the monotonic counter must start at 1 so a dropped leading record cannot "
+                "detach the chain from its origin (Cap 10 V1)"
+            ),
+            I5=None,
+            seq=first.seq,
+        )
 
     # ---- P0.2 / Cap 10 V1: invariant conservation ------------------------- #
     # Rule: any FAIL without explicit authorization compromises the system.

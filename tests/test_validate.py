@@ -233,6 +233,45 @@ def test_dropped_leading_record_breaks_the_origin():
     assert "origin" in body["reason"]
 
 
+def test_dropped_leading_record_reanchored_to_origin_still_blocks():
+    """Cap 10 V1: a batch whose counter starts at 2 is incomplete even if it is
+    re-anchored to the genesis and internally consecutive.
+
+    The per-step check alone (``t.seq == prev_t.seq + 1``) accepts [2, 3, 4] once
+    the chain is re-linked to the origin; only the start-of-batch check sees the
+    missing first record.
+    """
+    traj = build_trajectory(4)
+    del traj[0]  # seq now [2, 3, 4]
+    traj[0]["prev_hash"] = GENESIS_PREV
+    rechain(traj)  # internally valid, consecutive, anchored to the origin
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert body["action"] == "FREEZE"
+    assert "leading gap" in body["reason"]
+
+
+def test_batch_not_starting_at_one_blocks():
+    traj = build_trajectory(3)
+    for offset, t in enumerate(traj):
+        t["seq"] = offset + 5  # [5, 6, 7]
+    rechain(traj)
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert body["action"] == "FREEZE"
+    assert "starts at seq 5" in body["reason"]
+
+
+def test_non_positive_sequence_start_blocks():
+    traj = build_trajectory(3)
+    for offset, t in enumerate(traj):
+        t["seq"] = offset  # [0, 1, 2]
+    rechain(traj)
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert "non-positive start" in body["reason"]
+
+
 def test_invariant_fail_is_rejected():
     traj = build_trajectory(3)
     traj[2]["invariant_check"]["I2"] = False
