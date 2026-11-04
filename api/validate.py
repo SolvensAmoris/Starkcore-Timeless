@@ -410,11 +410,9 @@ def validate(req: TrajectoryReq) -> JSONResponse:
                 seq=t.seq,
             )
 
-    # The counter must *begin* at the batch origin. Checking only that it
-    # advances by one per step still accepts a batch that dropped its leading
-    # record(s): seq=[2, 3, 4] re-anchored to the origin is internally
-    # consecutive yet starts after the genesis. The first record must carry the
-    # first sequence number, so a gap at the head is caught too.
+    # The counter must advance by exactly one per step. A gap, a repeat or a
+    # reorder means a record was dropped, duplicated or shuffled, and the
+    # Merkle tree cannot prove otherwise (Cap 10 V1).
     for prev_t, t in zip(req.trajectory, req.trajectory[1:]):
         if t.seq != prev_t.seq + 1:
             if t.seq == prev_t.seq:
@@ -436,10 +434,11 @@ def validate(req: TrajectoryReq) -> JSONResponse:
                 seq=t.seq,
             )
 
-    # ...and it must start at 1. Checking the head after the per-step loop keeps
-    # a reorder reported as a reorder, while still catching a batch that dropped
-    # its leading record(s) and re-anchored: seq=[2, 3, 4] is internally
-    # consecutive yet never reaches the origin.
+    # ...and it must start at the batch origin. Checking only that it advances
+    # by one per step still accepts a batch that dropped its leading record(s):
+    # seq=[2, 3, 4] re-anchored to the origin is internally consecutive yet
+    # starts after the genesis. Checking the head after the per-step loop keeps
+    # a reorder reported as a reorder, while still catching that head gap.
     first = req.trajectory[0]
     if first.seq != 1:
         defect = "non-positive start" if first.seq < 1 else "leading gap"
