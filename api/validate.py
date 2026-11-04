@@ -386,9 +386,10 @@ def validate(req: TrajectoryReq) -> JSONResponse:
 
     # ---- P0.3 / Cap 10 V1: sensor completeness ---------------------------- #
     # The Merkle tree proves what was captured, not that nothing was dropped.
-    # Completeness is therefore carried by the monotonic sequence counter plus
-    # the events_lost metric; a gap, a repeat or a negative count all mean the
-    # batch cannot be affirmed complete, so the verdict is indeterminate (BLOCK).
+    # Completeness is therefore carried by the sequence counter plus the
+    # events_lost metric; a gap, a repeat, a reorder or a negative count all
+    # mean the batch cannot be affirmed complete, so the verdict is
+    # indeterminate (BLOCK).
     for t in req.trajectory:
         if t.events_lost < 0:
             return respond(
@@ -409,15 +410,25 @@ def validate(req: TrajectoryReq) -> JSONResponse:
                 seq=t.seq,
             )
 
+    # The counter must advance by exactly one. Strict increase alone would let a
+    # silent drop through: seq=[1, 5, 6] with events_lost=0 is still a missing
+    # record, and the counter is the only thing that can prove it is missing.
     for prev_t, t in zip(req.trajectory, req.trajectory[1:]):
-        if t.seq <= prev_t.seq:
+        if t.seq != prev_t.seq + 1:
+            if t.seq == prev_t.seq:
+                defect = "repeat"
+            elif t.seq < prev_t.seq:
+                defect = "reorder"
+            else:
+                defect = "gap"
             return respond(
                 Verdict.BLOCK,
                 level=0,
                 action="FREEZE",
                 reason=(
-                    f"non-monotonic sequence counter (seq {prev_t.seq} -> {t.seq}): "
-                    "a gap, repeat or reorder means the trajectory may be incomplete"
+                    f"non-consecutive sequence counter ({defect}: seq {prev_t.seq} -> {t.seq}): "
+                    "the monotonic counter must advance by exactly one; a gap, repeat or "
+                    "reorder means the trajectory may be incomplete (Cap 10 V1)"
                 ),
                 I5=None,
                 seq=t.seq,

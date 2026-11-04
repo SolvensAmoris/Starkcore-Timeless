@@ -181,35 +181,56 @@ def test_negative_events_lost_blocks_batch():
     assert body["action"] == "FREEZE"
 
 
-def test_monotonic_sequence_is_accepted():
+def test_consecutive_sequence_is_accepted():
     """A well-formed counter (1, 2, 3, ...) must not be a false positive."""
     assert post({"system_id": "sys-001", "trajectory": build_trajectory(3)})["verdict"] == "ACCEPT"
 
 
 def test_gapped_sequence_blocks_batch():
-    """Cap 10 V1: the counter is what proves completeness, so a gap is indeterminate."""
+    """Cap 10 V1: seq=[1, 5, 6] with events_lost=0 is a silently dropped record.
+
+    Strictly increasing would accept it; the counter must advance by exactly one.
+    """
     traj = build_trajectory(3)
-    traj[1]["seq"] = 5  # 1 -> 5 -> 3
+    # 1 -> 5 -> 6: consecutive after the gap, so only a gap-aware check finds
+    # the missing record; strict increase alone would accept it.
+    traj[1]["seq"] = 5
+    traj[2]["seq"] = 6
     rechain(traj)
     body = post({"system_id": "sys-001", "trajectory": traj})
     assert body["verdict"] == "BLOCK"
     assert body["level"] == 0
     assert body["action"] == "FREEZE"
-    assert "monotonic" in body["reason"]
+    assert "gap" in body["reason"]
 
 
 def test_duplicate_sequence_blocks_batch():
     traj = build_trajectory(3)
     traj[1]["seq"] = traj[0]["seq"]
     rechain(traj)
-    assert post({"system_id": "sys-001", "trajectory": traj})["verdict"] == "BLOCK"
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert body["action"] == "FREEZE"
+    assert "repeat" in body["reason"]
 
 
 def test_reordered_sequence_blocks_batch():
     traj = build_trajectory(3)
     traj[0]["seq"], traj[1]["seq"], traj[2]["seq"] = 3, 2, 1
     rechain(traj)
-    assert post({"system_id": "sys-001", "trajectory": traj})["verdict"] == "BLOCK"
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert body["action"] == "FREEZE"
+    assert "reorder" in body["reason"]
+
+
+def test_dropped_leading_record_breaks_the_origin():
+    """Dropping the first record detaches the chain from its declared origin."""
+    traj = build_trajectory(3)
+    del traj[0]  # seq now starts at 2, linked to a hash, not the genesis sentinel
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert "origin" in body["reason"]
 
 
 def test_invariant_fail_is_rejected():
