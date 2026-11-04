@@ -40,6 +40,13 @@ Expulsión irreversible solo con `2f+1` o más.
 - **I5** consistencia de enjambre: comparación **exacta** de hashes, nunca por resta
   numérica (Cap 10.2). `1` coincidencia, `0` contradicción verificable, `null` sin evidencia.
 - **I6** causalidad por **hash**, no por reloj (Cap 10 V3). El `timestamp_utc` es solo corroboración.
+- **Contador de secuencia** (Cap 10 V1): el árbol de Merkle prueba *qué* se
+  capturó, no que no falte nada. La completitud la sostienen el contador `seq` y
+  `events_lost`. El contador debe ser **consecutivo** y **arrancar en `seq=1`**:
+  un hueco (`1,5,6`), una repetición (`1,1,1`), un reordenamiento (`3,2,1`), un
+  lote que empieza después del origen (`2,3,4`, aunque se re-anclen los hashes al
+  génesis) o un `events_lost` negativo no son evidencia de manipulación, sino de
+  lote incompleto: `BLOCK`/`FREEZE`.
 
 ## Correcciones aplicadas al borrador del Cap 10
 

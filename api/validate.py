@@ -385,7 +385,21 @@ def validate(req: TrajectoryReq) -> JSONResponse:
         )
 
     # ---- P0.3 / Cap 10 V1: sensor completeness ---------------------------- #
+    # The Merkle tree proves what was captured, not that nothing was dropped.
+    # Completeness is therefore carried by the sequence counter plus the
+    # events_lost metric; a gap, a repeat, a reorder or a negative count all
+    # mean the batch cannot be affirmed complete, so the verdict is
+    # indeterminate (BLOCK).
     for t in req.trajectory:
+        if t.events_lost < 0:
+            return respond(
+                Verdict.BLOCK,
+                level=0,
+                action="FREEZE",
+                reason="malformed sensor telemetry: events_lost<0 is not a valid count",
+                I5=None,
+                seq=t.seq,
+            )
         if t.events_lost > 0:
             return respond(
                 Verdict.BLOCK,
@@ -395,6 +409,51 @@ def validate(req: TrajectoryReq) -> JSONResponse:
                 I5=None,
                 seq=t.seq,
             )
+
+    # The counter must advance by exactly one per step. A gap, a repeat or a
+    # reorder means a record was dropped, duplicated or shuffled, and the
+    # Merkle tree cannot prove otherwise (Cap 10 V1).
+    for prev_t, t in zip(req.trajectory, req.trajectory[1:]):
+        if t.seq != prev_t.seq + 1:
+            if t.seq == prev_t.seq:
+                defect = "repeat"
+            elif t.seq < prev_t.seq:
+                defect = "reorder"
+            else:
+                defect = "gap"
+            return respond(
+                Verdict.BLOCK,
+                level=0,
+                action="FREEZE",
+                reason=(
+                    f"non-consecutive sequence counter ({defect}: seq {prev_t.seq} -> {t.seq}): "
+                    "the monotonic counter must advance by exactly one; a gap, repeat or "
+                    "reorder means the trajectory may be incomplete (Cap 10 V1)"
+                ),
+                I5=None,
+                seq=t.seq,
+            )
+
+    # ...and it must start at the batch origin. Checking only that it advances
+    # by one per step still accepts a batch that dropped its leading record(s):
+    # seq=[2, 3, 4] re-anchored to the origin is internally consecutive yet
+    # starts after the genesis. Checking the head after the per-step loop keeps
+    # a reorder reported as a reorder, while still catching that head gap.
+    first = req.trajectory[0]
+    if first.seq != 1:
+        defect = "non-positive start" if first.seq < 1 else "leading gap"
+        return respond(
+            Verdict.BLOCK,
+            level=0,
+            action="FREEZE",
+            reason=(
+                f"non-consecutive sequence counter ({defect}: batch starts at seq {first.seq}): "
+                "the monotonic counter must start at 1 so a dropped leading record cannot "
+                "detach the chain from its origin (Cap 10 V1)"
+            ),
+            I5=None,
+            seq=first.seq,
+        )
 
     # ---- P0.2 / Cap 10 V1: invariant conservation ------------------------- #
     # Rule: any FAIL without explicit authorization compromises the system.
