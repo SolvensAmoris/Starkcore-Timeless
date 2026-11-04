@@ -173,6 +173,45 @@ def test_events_lost_blocks_batch():
     assert body["I5"] is None
 
 
+def test_negative_events_lost_blocks_batch():
+    traj = build_trajectory(2)
+    traj[0]["events_lost"] = -1
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert body["action"] == "FREEZE"
+
+
+def test_monotonic_sequence_is_accepted():
+    """A well-formed counter (1, 2, 3, ...) must not be a false positive."""
+    assert post({"system_id": "sys-001", "trajectory": build_trajectory(3)})["verdict"] == "ACCEPT"
+
+
+def test_gapped_sequence_blocks_batch():
+    """Cap 10 V1: the counter is what proves completeness, so a gap is indeterminate."""
+    traj = build_trajectory(3)
+    traj[1]["seq"] = 5  # 1 -> 5 -> 3
+    rechain(traj)
+    body = post({"system_id": "sys-001", "trajectory": traj})
+    assert body["verdict"] == "BLOCK"
+    assert body["level"] == 0
+    assert body["action"] == "FREEZE"
+    assert "monotonic" in body["reason"]
+
+
+def test_duplicate_sequence_blocks_batch():
+    traj = build_trajectory(3)
+    traj[1]["seq"] = traj[0]["seq"]
+    rechain(traj)
+    assert post({"system_id": "sys-001", "trajectory": traj})["verdict"] == "BLOCK"
+
+
+def test_reordered_sequence_blocks_batch():
+    traj = build_trajectory(3)
+    traj[0]["seq"], traj[1]["seq"], traj[2]["seq"] = 3, 2, 1
+    rechain(traj)
+    assert post({"system_id": "sys-001", "trajectory": traj})["verdict"] == "BLOCK"
+
+
 def test_invariant_fail_is_rejected():
     traj = build_trajectory(3)
     traj[2]["invariant_check"]["I2"] = False

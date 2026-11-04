@@ -385,13 +385,40 @@ def validate(req: TrajectoryReq) -> JSONResponse:
         )
 
     # ---- P0.3 / Cap 10 V1: sensor completeness ---------------------------- #
+    # The Merkle tree proves what was captured, not that nothing was dropped.
+    # Completeness is therefore carried by the monotonic sequence counter plus
+    # the events_lost metric; a gap, a repeat or a negative count all mean the
+    # batch cannot be affirmed complete, so the verdict is indeterminate (BLOCK).
     for t in req.trajectory:
+        if t.events_lost < 0:
+            return respond(
+                Verdict.BLOCK,
+                level=0,
+                action="FREEZE",
+                reason="malformed sensor telemetry: events_lost<0 is not a valid count",
+                I5=None,
+                seq=t.seq,
+            )
         if t.events_lost > 0:
             return respond(
                 Verdict.BLOCK,
                 level=0,
                 action="FREEZE",
                 reason="INCOMPLETE batch, events_lost>0: sensor tree proves what was captured, not completeness",
+                I5=None,
+                seq=t.seq,
+            )
+
+    for prev_t, t in zip(req.trajectory, req.trajectory[1:]):
+        if t.seq <= prev_t.seq:
+            return respond(
+                Verdict.BLOCK,
+                level=0,
+                action="FREEZE",
+                reason=(
+                    f"non-monotonic sequence counter (seq {prev_t.seq} -> {t.seq}): "
+                    "a gap, repeat or reorder means the trajectory may be incomplete"
+                ),
                 I5=None,
                 seq=t.seq,
             )
